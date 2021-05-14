@@ -2,10 +2,15 @@
 #include <Wire.h>
 #include <config.h>
 #include <osw_app.h>
+#include <osw_config.h>
+#include <osw_config_keys.h>
 #include <osw_hal.h>
 #include <osw_pins.h>
+#include <osw_ui.h>
+#include <stdlib.h>  //randomSeed
+#include <time.h>    //time
 
-#ifndef WIFI_SSID
+#ifndef CONFIG_WIFI_SSID
 #pragma error "!!!!!!!!"
 #pragma error "PLEASE COPY include/config.h.example TO include/config.h"
 #pragma error "AND CONFIGURE THE DEFINES FOR YOUR WATCH"
@@ -13,14 +18,21 @@
 #endif
 
 // #include "./apps/_experiments/runtime_test.h"
-#include "./apps/main/stopwatch.h"
-#include "./apps/main/watchface.h"
-#include "./apps/tools/print_debug.h"
-#include "./apps/tools/time_from_web.h"
-#include "./apps/tools/water_level.h"
+#include "./apps/_experiments/hello_world.h"
+#ifdef LUA_SCRIPTS
 #include "./apps/main/luaapp.h"
+#endif
+#include "./apps/main/stopwatch.h"
+#include "./apps/main/switcher.h"
+#include "./apps/main/watchface.h"
+#include "./apps/main/watchface_binary.h"
+#include "./apps/main/watchface_digital.h"
+#include "./apps/tools/button_test.h"
+#include "./apps/tools/config_mgmt.h"
+#include "./apps/tools/print_debug.h"
+#include "./apps/tools/time_config.h"
+#include "./apps/tools/water_level.h"
 #include "./overlays/overlays.h"
-#include "apps/lua/mylua_example.h"
 #if defined(GPS_EDITION)
 #include "./apps/main/map.h"
 #endif
@@ -28,29 +40,17 @@
 #include "./services/companionservice.h"
 #endif
 #include "./services/servicemanager.h"
+#include "hal/esp32/spiffs_filesystem.h"
 #include "services/services.h"
 
-OswHal *hal = new OswHal();
+OswHal *hal = new OswHal(new SPIFFSFileSystemHal());
 // OswAppRuntimeTest *runtimeTest = new OswAppRuntimeTest();
 
-// HINT: NUM_APPS must match the number of apps below!
-#if defined(GPS_EDITION)
-#define NUM_APPS 5
-#else
-#define NUM_APPS 4
-#endif
-RTC_DATA_ATTR uint8_t appPtr = 0;
-OswApp *mainApps[] = {
-    new OswAppWatchface(),  //
-#if defined(GPS_EDITION)
-    new OswAppMap(),  //
-#endif
-    // new OswAppPrintDebug(),   //
-    new OswAppStopWatch(),    //
-    new OswAppTimeFromWeb(),  //
-    new OswAppWaterLevel(),    //
-    // new OswLuaApp(myLuaExample)
-};
+uint16_t mainAppIndex = 0;  // -> wakeup from deep sleep returns to watch face (and allows auto sleep)
+RTC_DATA_ATTR uint16_t watchFaceIndex = 0;
+
+OswAppSwitcher *mainAppSwitcher = new OswAppSwitcher(BUTTON_1, LONG_PRESS, true, true, &mainAppIndex);
+OswAppSwitcher *watchFaceSwitcher = new OswAppSwitcher(BUTTON_1, SHORT_PRESS, false, false, &watchFaceIndex);
 
 #include "esp_task_wdt.h"
 TaskHandle_t Core2WorkerTask;
@@ -97,12 +97,37 @@ void core2Worker(void *pvParameters) {
   }
 }
 
+short displayTimeout = 0;
 void setup() {
+  watchFaceSwitcher->registerApp(new OswAppWatchface());
+  watchFaceSwitcher->registerApp(new OswAppWatchfaceDigital());
+  watchFaceSwitcher->registerApp(new OswAppWatchfaceBinary());
+  mainAppSwitcher->registerApp(watchFaceSwitcher);
+#ifdef GPS_EDITION
+  mainAppSwitcher->registerApp(new OswAppMap());
+#endif
+  // mainAppSwitcher->registerApp(new OswAppHelloWorld());
+  // mainAppSwitcher->registerApp(new OswAppPrintDebug());
+  mainAppSwitcher->registerApp(new OswAppStopWatch());
+  mainAppSwitcher->registerApp(new OswAppWaterLevel());
+  mainAppSwitcher->registerApp(new OswAppTimeConfig());
+  mainAppSwitcher->registerApp(new OswAppConfigMgmt());
+#ifdef LUA_SCRIPTS
+  mainAppSwitcher->registerApp(new OswLuaApp("stopwatch.lua"));
+#endif
+
   Serial.begin(115200);
+  srand(time(nullptr));
+
+  // Load config as early as possible, to ensure everyone can access it.
+  OswConfig::getInstance()->setup();
+  OswUI::getInstance()->setup(hal);
 
   hal->setupPower();
+  hal->setupFileSystem();
   hal->setupButtons();
   hal->setupSensors();
+  hal->setupTime();
 
   hal->setupDisplay();
   hal->setBrightness(128);
@@ -112,7 +137,8 @@ void setup() {
 
   OswServiceManager &serviceManager = OswServiceManager::getInstance();
   serviceManager.setup(hal);  // Services should always start before apps do
-  mainApps[appPtr]->setup(hal);
+  mainAppSwitcher->setup(hal);
+  displayTimeout = OswConfigAllKeys::displayTimeout.get();
 }
 
 void loop() {
@@ -121,36 +147,12 @@ void loop() {
   hal->checkButtons();
   hal->updateAccelerometer();
 
-  // handle long click to sleep
-  if (hal->btn1Down() >= BTN_1_SLEEP_TIMEOUT) {
-    hal->getCanvas()->getGraphics2D()->fill(rgb565(0, 0, 0));
-    hal->flushCanvas();
-    hal->deepSleep();
-  }
-
-  // handle medium click to switch
-  if (hal->btn1Down() >= BTN_1_APP_SWITCH_TIMEOUT) {
-    // switch app
-    mainApps[appPtr]->stop(hal);
-    appPtr++;
-    appPtr %= NUM_APPS;
-    mainApps[appPtr]->setup(hal);
-  }
-
-  mainApps[appPtr]->loop(hal);
-  // runtimeTest->loop(hal);
+  mainAppSwitcher->loop(hal);
 
   // limit to 30 fps and handle display flushing
   if (millis() - lastFlush > 1000 / 30 && hal->isRequestFlush()) {
     drawOverlays(hal);
     hal->flushCanvas();
     lastFlush = millis();
-  }
-
-  // auto sleep on first screen
-  if (appPtr == 0 && hal->screenOnTime() > 5000) {
-    hal->gfx()->fill(rgb565(0, 0, 0));
-    hal->flushCanvas();
-    hal->deepSleep();
   }
 }

@@ -2,7 +2,7 @@ name: osw-os_pr_check
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ master, develop ]
 
 jobs:
   build_linux:
@@ -34,6 +34,8 @@ jobs:
       run: mv include/config.h.example include/config.h
     - name: Run PlatformIO pico32_LIGHT_EDITION
       run: pio run -e pico32_LIGHT_EDITION
+    - name: Run PlatformIO pico32_LIGHT_EDITION_LUA
+      run: pio run -e pico32_LIGHT_EDITION_LUA
     - name: Run PlatformIO pico32_GPS_EDITION
       run: pio run -e pico32_GPS_EDITION
 

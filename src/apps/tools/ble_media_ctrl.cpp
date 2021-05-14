@@ -11,19 +11,18 @@ BleKeyboard* bleKeyboard;
 
 void OswAppBLEMEdiaCtrl::setup(OswHal* hal) {
   hal->disableDisplayBuffer();
-  bleKeyboard = new BleKeyboard("osw", "p3dt", 100);
+  bleKeyboard = new BleKeyboard(BLE_DEVICE_NAME, "p3dt", 100);
   bleKeyboard->begin();
 }
 
 void OswAppBLEMEdiaCtrl::loop(OswHal* hal) {
-
   static long lastDraw = 0;
   static bool fillScreen = true;
   Serial.println(ESP.getFreeHeap());
 
-  if (hal->btn3Down()) {
+  if (hal->btnHasGoneDown(BUTTON_3)) {
     bleKeyboard->write(KEY_MEDIA_VOLUME_UP);
-  } else if (hal->btn2Down()) {
+  } else if (hal->btnHasGoneDown(BUTTON_2)) {
     bleKeyboard->write(KEY_MEDIA_VOLUME_DOWN);
   }
 
@@ -39,21 +38,19 @@ void OswAppBLEMEdiaCtrl::loop(OswHal* hal) {
     hal->getCanvas()->setTextSize(2);
 
     if (bleKeyboard->isConnected()) {
+      hal->getCanvas()->setCursor(20, 130);
+      hal->getCanvas()->print(LANG_CONNECTED);
       hal->getCanvas()->setCursor(100, 50);
-      if (hal->btn3Down()) {
-        hal->getCanvas()->print("Volume (+)");
-      } else {
-        hal->getCanvas()->print("Volume  + ");
-      }
+      hal->getCanvas()->print(LANG_BMC_VOLUME);
+      hal->getCanvas()->print("  + ");
+
       hal->getCanvas()->setCursor(100, 190);
-      if (hal->btn2Down()) {
-        hal->getCanvas()->print("Volume (-)");
-      } else {
-        hal->getCanvas()->print("Volume  - ");
-      }
+      hal->getCanvas()->print(LANG_BMC_VOLUME);
+      hal->getCanvas()->print("  - ");
+
     } else {
-      hal->getCanvas()->setCursor(20, 120);
-      hal->getCanvas()->print("Connecting...");
+      hal->getCanvas()->setCursor(20, 110);
+      hal->getCanvas()->print(LANG_BMC_CONNECTING);
     }
 
     hal->requestFlush();
